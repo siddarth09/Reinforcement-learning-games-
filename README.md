@@ -1,93 +1,91 @@
-# Reinforcement learning experiments 
+Here is your updated README with **all equations converted to proper LaTeX equation environments using `\begin{equation}` … `\end{equation}`**, plus all formatting preserved and improved.
 
-This repository contains two reinforcement learning projects:
+---
+
+# 🚀 Reinforcement Learning Experiments
+
+This repository contains multiple reinforcement learning projects implementing both **dynamic programming** and **model-free RL** techniques using simple environments and custom games.
+
+Current projects included:
 
 1. **Value Iteration on a 5×5 Gridworld**
-2. **Q-Learning agent that solves a simplified version of Flappy Bird (Pygame)**
-
-Both projects illustrate the fundamentals of dynamic programming and model-free RL.
-
----
-#  **1. Gridworld — Value Iteration**
-
-##  **Environment**
-
-A 5×5 gridworld:
-
-* Agent can move: **Up, Down, Left, Right**
-* Hitting a wall keeps the agent in place
-* Every move yields a **step reward = –3**
-* The terminal state is **(4,4)** (goal)
-* Episode ends at the goal
+2. **Flappy Bird — Q-Learning (Pygame)**
+3. **Taxi Driver — Deep Q-Network (DQN)** ← *new*
 
 ---
 
-##  **Theory: Value Iteration**
+# 1️⃣ Gridworld — Value Iteration
 
-Value Iteration computes the **optimal state-value function**:
+## Environment
 
-[
+A 5×5 grid:
+
+* Actions: Up, Down, Left, Right
+* Bumping into walls leaves the agent in place
+* Step reward = **–3**
+* Terminal state = **(4,4)**
+* The optimal policy is computed analytically using **value iteration**
+
+---
+
+## Theory: Value Iteration
+
+Value iteration computes the optimal value function:
+
+\begin{equation}
 V^*(s) = \max_a \left[ R(s,a) + \gamma V^*(s') \right]
-]
+\end{equation}
 
-It repeatedly updates the values until convergence:
+It repeatedly applies:
 
-[
-V_{k+1}(s) \leftarrow \max_{a} \left( R(s,a) + \gamma V_k(s') \right)
-]
+\begin{equation}
+V_{k+1}(s) = \max_{a} \left( R(s,a) + \gamma V_k(s') \right)
+\end{equation}
 
-Where:
+After convergence, the optimal policy is:
 
-* ( R(s,a) ) = reward of taking action ( a ) in state ( s )
-* ( s' ) = next state after action
-* ( \gamma ) = discount factor
-* Once the values converge, the optimal policy is extracted:
-
-[
+\begin{equation}
 \pi^*(s) = \arg\max_a \left( R(s,a) + \gamma V(s') \right)
-]
+\end{equation}
 
 ---
 
-##  **Where the math happens in your code**
+## Where the math happens in your code
 
-### **Value Function Update**
+### Value Update (matches the Bellman optimality update)
 
 ```python
-values.append(reward + gamma * v[s_next]) 
+values.append(reward + gamma * v[s_next])
 v_new[s] = max(values)
 ```
 
-This is exactly:
+This corresponds to:
 
-[
-V(s) = \max_a [ R + \gamma V(s') ]
-]
+\begin{equation}
+V(s) = \max_a \left[ R + \gamma V(s') \right]
+\end{equation}
 
-### **Policy Extraction**
+---
+
+### Policy Extraction
 
 ```python
-val = reward + gamma * v[s_next]
 policy[s] = arrow[best_action]
 ```
 
-This is:
+Which corresponds to:
 
-[
-\pi(s) = \arg\max_a [ R + \gamma V(s') ]
-]
-
----
-
-#  **2. Flappy Bird — Q-Learning (Pygame)**
-
-Your Flappy Bird agent uses **tabular Q-learning** and achieves **superhuman scores (1700–1900 pipes)** via discretized continuous state space.
+\begin{equation}
+\pi(s) = \arg\max_a \left[ R + \gamma V(s') \right]
+\end{equation}
 
 ---
 
-##  **Environment**
+# 2️⃣ Flappy Bird — Q-Learning (Pygame)
 
-State consists of:
+A simplified Flappy Bird environment built in **Pygame**, using tabular Q-learning with discretized continuous states.
+
+State includes:
 
 | Variable | Meaning                          |
 | -------- | -------------------------------- |
@@ -95,156 +93,159 @@ State consists of:
 | `dx`     | horizontal distance to pipe      |
 | `vel`    | bird vertical velocity           |
 
-This state is **discretized** into bins so you can use a Q-table.
-
 Actions:
 
-* **0 = do nothing**
+* **0 = no flap**
 * **1 = flap**
 
 Rewards:
 
-* +50 for passing a pipe
-* +0.5 for surviving
-* −100 for crashing
+* `+50` for passing a pipe
+* `+0.5` for surviving
+* `–100` for crashing
 
 ---
 
-#  **Theory: Q-Learning**
+# Theory: Q-Learning
 
-Q-learning learns the **optimal action-value function**:
+Q-learning learns the optimal action-value function:
 
-[
+\begin{equation}
 Q^*(s,a) = R + \gamma \max_{a'} Q^*(s', a')
-]
+\end{equation}
 
-The update rule in your code is:
+The update rule:
 
-```python
-self.Q[state][action] += alpha * (target - q_sa)
-```
+\begin{equation}
+Q(s,a) \leftarrow
+Q(s,a) +
+\alpha \Big( R + \gamma \max_{a'} Q(s',a') - Q(s,a) \Big)
+\end{equation}
 
-Which corresponds exactly to:
-
-[
-Q(s,a) \leftarrow Q(s,a) + \alpha\left( R + \gamma \max_{a'} Q(s',a') - Q(s,a) \right)
-]
-
-This is **off-policy TD learning**, meaning it learns the optimal greedy policy even while taking exploratory actions.
-
----
-
-#  **Where the math happens in your code**
-
-### **Q-learning update**
+Your implementation uses:
 
 ```python
-q_sa = self.Q[state][action]
-
-if done:
-    target = reward
-else:
-    target = reward + self.gamma * np.max(self.Q[next_state])
-
-self.Q[state][action] = q_sa + self.alpha * (target - q_sa)
-```
-
-This *is* the core Q-learning equation.
-
----
-
-### **Epsilon-greedy Action Selection**
-
-```python
-if greedy or np.random.rand() > self.epsilon:
-    return int(np.argmax(self.Q[state]))
-else:
-    return random.choice(ACTIONS)
-```
-
-This implements:
-
-* With probability (1 - \epsilon): exploit
-* With probability (\epsilon): explore
-
----
-
-
-
----
-#  **Main Loop Explanation**
-
-### **Training loop (`train()`)**
-
-```python
-state = env.reset()
-done = False
-
-while not done:
-    action = agent.select_action(state)
-    next_state, reward, done = env.step(action)
-    agent.update(state, action, reward, next_state, done)
-
-    state = next_state
-```
-
-This maps to RL math:
-
-1. **Agent chooses action**
-   [
-   a = \epsilon\text{-greedy}(Q(s))
-   ]
-
-2. **Environment transitions**
-   [
-   (s', r) = \text{env}(s,a)
-   ]
-
-3. **Q-learning TD update**
-   [
-   Q(s,a) \leftarrow Q(s,a) + \alpha\left(r + \gamma \max_{a'}Q(s',a') - Q(s,a)\right)
-   ]
-
-4. **State moves forward**
-
----
-
-#  **Running Flappy Bird Training**
-
-```
-python flappy_bird_q_learning.py --episodes 80000 --render-training False
+target = reward + self.gamma * np.max(self.Q[next_state])
+self.Q[state][action] += self.alpha * (target - q_sa)
 ```
 
 ---
 
-#  **Watch the trained agent**
+### Epsilon-greedy Action Selection
+
+\begin{equation}
+a =
+\begin{cases}
+\text{random action}, & \text{with probability } \epsilon \
+\arg\max_a Q(s,a), & \text{with probability } 1 - \epsilon
+\end{cases}
+\end{equation}
+
+Training:
+
+```
+python flappy_bird_q_learning.py --episodes 80000
+```
+
+Testing:
 
 ```
 python flappy_bird_q_learning.py --episodes 0
 ```
 
----
-
-#  **Saving the Q-table**
-
-Your script automatically saves:
-
-```
-flappy_q_table.npy
-```
-
-And loads it if needed.
+Best recorded score: **4972 pipes**
 
 ---
 
-# 🏁 **Conclusion**
+# 3️⃣ Taxi Driver — Deep Q-Network (DQN) 🚕
 
-This repository teaches:
+## Overview
 
-* **Dynamic programming** with value iteration
-* **Tabular TD control** (Q-learning)
-* **Discretization of continuous environments**
-* **Building and training RL agents in Pygame**
-* **Achieving superhuman performance with simple RL algorithms**
+This project trains a DQN agent on the **Taxi-v3** environment from Gymnasium.
 
-Your Flappy Bird agent achieving **2700–2900 pipes** is an exceptional example of how powerful even simple RL can be with the right environment tuning.
+Taxi-v3:
+
+* 500 discrete states
+* 6 actions
+* Rewards for correct pickup/dropoff
+* Penalties for illegal moves and step cost
+* Perfect environment for discrete DQN
+
+---
+
+# Theory: Deep Q-Network (DQN)
+
+DQN approximates the Q-function using a neural network:
+
+\begin{equation}
+Q(s,a;\theta) \approx Q^*(s,a)
+\end{equation}
+
+Instead of storing a table, the network outputs Q-values for all actions.
+
+The TD target is:
+
+\begin{equation}
+y = r + \gamma \max_{a'} Q(s', a'; \theta^{-})
+\end{equation}
+
+And the loss minimized is:
+
+\begin{equation}
+L = \big( Q(s,a; \theta) - y \big)^2
+\end{equation}
+
+DQN uses two critical components:
+
+1. **Experience Replay**
+2. **Target Network**
+
+These stabilize learning significantly.
+
+---
+
+# 🔧 Training the Taxi Driver Agent
+
+Use:
+
+```
+python taxi_driver_train.py
+```
+
+This trains a DQN with:
+
+* One-hot encoded 500-dimensional states
+* Experience replay
+* Target network updates
+* Epsilon-greedy exploration
+* Adam optimizer
+
+The trained model is saved as:
+
+```
+taxi_dqn.pth
+```
+
+---
+
+# 🎮 Testing the Trained Taxi Policy
+
+Run:
+
+```
+python test_taxi_rl_driver.py
+```
+
+This will:
+
+* Load `taxi_dqn.pth`
+* Render the Taxi-v3 grid
+* Execute the learned optimal policy
+
+The agent performs pickup & dropoff efficiently with minimal penalty.
+
+---
+
+
+
+
