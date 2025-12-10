@@ -55,7 +55,7 @@ def train(args):
 
 
     # ---------- PPO LOOP ----------
-    for update in range(args.updates):
+    for update in range(args.updates): # total number of episodes 
 
         obs, _ = env.reset()
         obs_buf, act_unscaled_buf, logp_buf = [], [], []
@@ -64,7 +64,7 @@ def train(args):
         steps = 0
 
         # ---------- COLLECT TRAJECTORY ----------
-        while steps < args.steps_per_update:
+        while steps < args.steps_per_update: #total time per episode 
 
             obs_t = torch.tensor(obs, dtype=torch.float32).to(DEVICE)
 
