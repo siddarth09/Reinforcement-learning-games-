@@ -144,8 +144,12 @@ def train(args):
         successes = 0
         # reward components, if provided by env
         reward_components = {
-            "reach": [], "grasp": [], "lift": [], "place": [], "success": []
-        }
+                "reach": [],
+                "success": [],
+                "joint_penalty": [],
+                "accel_penalty": [],
+                "obstacle_penalty": []
+            }
 
         obs, _ = env.reset()
 
@@ -166,14 +170,14 @@ def train(args):
             dones.append(done_flag)
             values.append(float(value.item()))
 
-            # Success & reward components
-            if info.get("success", False):
-                successes += 1
-            rew_info = info.get("rew", {})  # optional dict
+            rew_info = info.get("rew", {})
             for k in reward_components:
                 if k in rew_info:
                     reward_components[k].append(float(rew_info[k]))
 
+            # Count successes
+            if info.get("success", False):
+                successes += 1
             obs = next_obs
             if done_flag:
                 obs, _ = env.reset()
@@ -216,30 +220,30 @@ def train(args):
             return float(np.mean(arr)) if len(arr) > 0 else 0.0
 
         r_reach_m = comp_mean("reach")
-        r_grasp_m = comp_mean("grasp")
-        r_lift_m = comp_mean("lift")
-        r_place_m = comp_mean("place")
         r_success_m = comp_mean("success")
+        r_joint_m = comp_mean("joint_penalty")
+        r_accel_m = comp_mean("accel_penalty")
+        r_obst_m = comp_mean("obstacle_penalty")
 
         # ---------- Console summary ----------
         print(f"""
-================= Epoch {epoch} =================
-Return:             {ep_return:.2f}
-Success Rate:       {success_rate*100:.2f}%
-Mean |action|:      {mean_actions:.6f}
-Value Pred Mean:    {mean_value_pred:.6f}
-Value MSE:          {value_error:.6f}
-Policy Loss:        {pol_loss:.6f}
-Value Loss:         {val_loss:.6f}
-Entropy:            {entropy:.6f}
--------------------------------------------------
-Reach Reward avg:   {r_reach_m:.6f}
-Grasp Reward avg:   {r_grasp_m:.6f}
-Lift Reward avg:    {r_lift_m:.6f}
-Place Reward avg:   {r_place_m:.6f}
-Success Reward avg: {r_success_m:.6f}
-=================================================
-""".strip())
+            ================= Epoch {epoch} =================
+            Return:               {ep_return:.2f}
+            Success Rate:         {success_rate*100:.2f}%
+            Mean |action|:        {mean_actions:.6f}
+            Value Pred Mean:      {mean_value_pred:.6f}
+            Value MSE:            {value_error:.6f}
+            Policy Loss:          {pol_loss:.6f}
+            Value Loss:           {val_loss:.6f}
+            Entropy:              {entropy:.6f}
+            -------------------------------------------------
+            Reach Reward avg:      {r_reach_m:.4f}
+            Success Reward avg:    {r_success_m:.4f}
+            Joint Penalty avg:     {r_joint_m:.4f}
+            Accel Penalty avg:     {r_accel_m:.4f}
+            Obstacle Penalty avg:  {r_obst_m:.4f}
+            =================================================
+            """)
 
         # ---------- TensorBoard ----------
         writer.add_scalar("Return/EpochTotal", ep_return, epoch)
@@ -253,10 +257,10 @@ Success Reward avg: {r_success_m:.6f}
         writer.add_scalar("Loss/Entropy", entropy, epoch)
 
         writer.add_scalar("Rewards/Reach", r_reach_m, epoch)
-        writer.add_scalar("Rewards/Grasp", r_grasp_m, epoch)
-        writer.add_scalar("Rewards/Lift", r_lift_m, epoch)
-        writer.add_scalar("Rewards/Place", r_place_m, epoch)
-        writer.add_scalar("Rewards/SuccessR", r_success_m, epoch)
+        writer.add_scalar("Rewards/Success", r_success_m, epoch)
+        writer.add_scalar("Rewards/JointPenalty", r_joint_m, epoch)
+        writer.add_scalar("Rewards/AccelPenalty", r_accel_m, epoch)
+        writer.add_scalar("Rewards/ObstaclePenalty", r_obst_m, epoch)
 
         # ---------- Checkpoints ----------
         if epoch % args.save_freq == 0:

@@ -1,82 +1,83 @@
 import numpy as np
-import mujoco as mu
+import mujoco as mj
 from gymnasium import Env, spaces
 
 
 class PandaEnv(Env):
     """
-    Franka Panda MuJoCo environment for pick-and-place with ΔEE control.
+    Franka Panda reaching environment using ΔEE Cartesian actions.
 
-    Action (5):
-        [dx, dy, dz, dyaw, gripper_cmd]  (Cartesian delta + yaw rate + gripper open/close)
+    Action space (5D):
+        [dx, dy, dz, dyaw, grip_cmd]
 
-    Observation (27):
-        [ q(7), dq(7),
-          ee_pos(3), ee_yaw(1),
-          cube_pos(3), cube_yaw(1),
-          goal_pos(3), goal_yaw(1),
-          gripper_state(1) ]
+    Observation space (20D):
+        [q(7), dq(7), ee_pos(3), cube_pos(3)]
     """
 
     metadata = {"render_modes": ["rgb_array"]}
 
-    def __init__(self, xml_path, dt=0.02, headless=True,
-             w_reach=1.0, w_grasp=1.0, w_lift=1.0,
-             w_transport=1.0, w_success=1.0,
-             w_collision=1.0, w_drop=1.0):
+    # ============================================================
+    # Init
+    # ============================================================
+    def __init__(
+            self, 
+            xml_path, 
+            dt=0.02, 
+            headless=True,
+            w_reach=1.0, 
+            w_grasp=1.0, 
+            w_lift=1.0,
+            w_transport=1.0, 
+            w_success=1.0,
+            w_collision=1.0, 
+            w_drop=1.0,
+        ):
 
         super().__init__()
 
-        # --- Core sim ---
-        self.model = mu.MjModel.from_xml_path(xml_path)
-        self.data = mu.MjData(self.model)
-        self.dt = float(dt)
-        self.headless = bool(headless)
+        self.dt = dt
+        self.xml_path = xml_path
 
-        # --- Renderer for video/logging (MuJoCo 3.x) ---
-        # If camera name doesn't exist, we fall back to default free camera.
-        self.renderer = mu.Renderer(self.model, height=480, width=640)
-        self.camera_name = "table_rgb"
-        cam_id = mu.mj_name2id(self.model, mu.mjtObj.mjOBJ_CAMERA, self.camera_name)
-        self.camera_id = cam_id if cam_id != -1 else None
+        # ------------------ MuJoCo model ------------------
+        self.model = mj.MjModel.from_xml_path(xml_path)
+        self.data = mj.MjData(self.model)
 
-        # --- Key sites & bodies ---
-        self.ee_site = mu.mj_name2id(self.model, mu.mjtObj.mjOBJ_SITE, "panda_ee")
+        self.headless = headless
+
+        # Sites & bodies
+        self.ee_site = mj.mj_name2id(self.model, mj.mjtObj.mjOBJ_SITE, "panda_ee")
         if self.ee_site == -1:
-            raise RuntimeError("Site 'panda_ee' not found in model.")
-        self.goal_site = mu.mj_name2id(self.model, mu.mjtObj.mjOBJ_SITE, "goal")
-        if self.goal_site == -1:
-            raise RuntimeError("Site 'goal' not found in model.")
+            raise RuntimeError("Missing site: panda_ee")
 
         self.cube_names = ["cube_red", "cube_green", "cube_blue", "cube_yellow", "cube_purple"]
-        self.cube_body_id = None  # set on reset()
+        self.cube_body = None
 
-        # --- Finger joints (IDs) & DOF/QPOS indices ---
-        self.lf_joint = mu.mj_name2id(self.model, mu.mjtObj.mjOBJ_JOINT, "finger_joint1")
-        self.rf_joint = mu.mj_name2id(self.model, mu.mjtObj.mjOBJ_JOINT, "finger_joint2")
-        if self.lf_joint == -1 or self.rf_joint == -1:
-            raise RuntimeError("Finger joints 'finger_joint1'/'finger_joint2' not found.")
-
-        # map joint -> dof and qpos addresses
-        self.lf_dof = int(self.model.jnt_dofadr[self.lf_joint])
-        self.rf_dof = int(self.model.jnt_dofadr[self.rf_joint])
-        self.lf_qpos = int(self.model.jnt_qposadr[self.lf_joint])
-        self.rf_qpos = int(self.model.jnt_qposadr[self.rf_joint])
-
-        # --- Action/Obs spaces ---
+        # --------------------------------------------------
+        # Gym Spaces
+        # --------------------------------------------------
         self.action_space = spaces.Box(
-            low=np.array([-0.02, -0.02, -0.02, -0.25, -1.0], dtype=np.float32),
-            high=np.array([ 0.02,  0.02,  0.02,  0.25,  1.0], dtype=np.float32),
+            low=np.array([-0.03, -0.03, -0.03, -0.3, -1.0], dtype=np.float32),
+            high=np.array([ 0.03,  0.03,  0.03,  0.3,  1.0], dtype=np.float32)
         )
-        high = np.inf * np.ones(27, dtype=np.float32)
-        self.observation_space = spaces.Box(-high, high, dtype=np.float32)
 
-        # --- Episode state ---
+        obs_dim = 20
+        high = np.inf * np.ones(obs_dim, dtype=np.float32)
+        self.observation_space = spaces.Box(-high, high)
+
+        # State
         self.step_count = 0
-        self.max_steps = 250
-        self.lifted = False
+        self.max_steps = 200
+        self._prev_action = None
 
-        # Weights
+        # Table height (adjust to XML if needed)
+        self.table_height = 0.40
+        # --- Gripper joint IDs ---
+        self.gripper_left = mj.mj_name2id(self.model, mj.mjtObj.mjOBJ_JOINT, "finger_joint1")
+        self.gripper_right = mj.mj_name2id(self.model, mj.mjtObj.mjOBJ_JOINT, "finger_joint2")
+
+        if self.gripper_left == -1 or self.gripper_right == -1:
+            raise RuntimeError("Gripper finger joints not found in the model!")
+
         self.w_reach = w_reach
         self.w_grasp = w_grasp
         self.w_lift = w_lift
@@ -84,264 +85,208 @@ class PandaEnv(Env):
         self.w_success = w_success
         self.w_collision = w_collision
         self.w_drop = w_drop
-
     # ============================================================
-    # -------------------- Utility Functions ---------------------
+    # Helpers
     # ============================================================
 
-    def _get_ee_pose(self):
-        pos = self.data.site_xpos[self.ee_site].copy()
-        mat_flat = self.data.site_xmat[self.ee_site].copy()  # len 9
-        mat = mat_flat.reshape(3, 3)
-        yaw = np.arctan2(mat[1, 0], mat[0, 0])
-        return pos, yaw
+    def _get_ee_pos(self):
+        return self.data.site_xpos[self.ee_site].copy()
 
-    def _get_cube_pose(self):
-        # cube_body_id is a BODY id; use body frames (xpos/xmat)
-        pos = self.data.xpos[self.cube_body_id].copy()
-        mat_flat = self.data.xmat[self.cube_body_id].copy()  # len 9
-        mat = mat_flat.reshape(3, 3)
-        yaw = np.arctan2(mat[1, 0], mat[0, 0])
-        return pos, yaw
-
-    def _get_goal_pose(self):
-        pos = self.data.site_xpos[self.goal_site].copy()
-        yaw = 0.0
-        return pos, yaw
-
-    def _get_gripper_state(self):
-        # Sum of finger joint qpos (proxy for opening/closing)
-        lf = float(self.data.qpos[self.lf_qpos])
-        rf = float(self.data.qpos[self.rf_qpos])
-        return lf + rf
+    def _get_cube_pos(self):
+        return self.data.xpos[self.cube_body].copy()
 
     def _pick_random_cube(self):
         name = np.random.choice(self.cube_names)
-        body_id = mu.mj_name2id(self.model, mu.mjtObj.mjOBJ_BODY, name)
-        if body_id == -1:
-            raise RuntimeError(f"Cube body '{name}' not found.")
-        self.cube_body_id = body_id
-
-    # ============================================================
-    # ----------------------- Observation -------------------------
-    # ============================================================
+        body = mj.mj_name2id(self.model, mj.mjtObj.mjOBJ_BODY, name)
+        if body == -1:
+            raise RuntimeError(f"Cube {name} not found")
+        self.cube_body = body
 
     def _get_obs(self):
-        q = self.data.qpos[:7].copy()
-        dq = self.data.qvel[:7].copy()
+        q = self.data.qpos[:7]
+        dq = self.data.qvel[:7]
+        ee = self._get_ee_pos()
+        cube = self._get_cube_pos()
+        return np.concatenate([q, dq, ee, cube]).astype(np.float32)
+    
+    def _apply_gripper(self, grip_cmd):
+        """
+        grip_cmd in [-1, 1]
+        > 0 → close gripper
+        < 0 → open gripper
+        """
 
-        ee_pos, ee_yaw = self._get_ee_pose()
-        cube_pos, cube_yaw = self._get_cube_pose()
-        goal_pos, goal_yaw = self._get_goal_pose()
-        grip = np.array([self._get_gripper_state()], dtype=np.float32)
+        # Normalize grip speed
+        speed = 0.02 * np.clip(grip_cmd, -1.0, 1.0)
 
-        obs = np.concatenate([
-            q, dq,
-            ee_pos, [ee_yaw],
-            cube_pos, [cube_yaw],
-            goal_pos, [goal_yaw],
-            grip
-        ]).astype(np.float32)
-        return obs
+        # Finger joint positions
+        left = self.data.qpos[self.gripper_left]
+        right = self.data.qpos[self.gripper_right]
+
+        # Gripper limits (Panda default)
+        min_close = 0.0       # fully closed
+        max_open = 0.04       # fully open
+
+        if grip_cmd > 0:  
+            # Close: move both fingers inward
+            left  = max(min_close, left  - speed)
+            right = max(min_close, right - speed)
+        else:
+            # Open: move both fingers outward
+            left  = min(max_open, left  + speed)
+            right = min(max_open, right + speed)
+
+        # Write back joint values
+        self.data.qpos[self.gripper_left] = left
+        self.data.qpos[self.gripper_right] = right
 
     # ============================================================
-    # --------------- ACTION → Δq via Jacobian -------------------
+    # Δx → Δq (Jacobian IK)
     # ============================================================
-
     def _apply_action(self, action):
         dx, dy, dz, dyaw, grip_cmd = action
 
-        # Desired EE spatial velocity (cartesian)
-        v = np.zeros(6, dtype=np.float64)
-        v[:3] = np.array([dx, dy, dz], dtype=np.float64) / self.dt
-        v[5] = float(dyaw) / self.dt
+        # --------- Arm motion (Jacobian IK) ----------
+        v = np.zeros(6)
+        v[0] = dx / self.dt
+        v[1] = dy / self.dt
+        v[2] = dz / self.dt
+        v[5] = dyaw / self.dt
 
-        # Jacobian at EE site
+        # Compute EE Jacobian
         Jp = np.zeros((3, self.model.nv))
         Jr = np.zeros((3, self.model.nv))
-        mu.mj_jacSite(self.model, self.data, Jp, Jr, self.ee_site)
-        J = np.vstack([Jp, Jr])[:, :7]  # use 7 arm DOFs only
+        mj.mj_jacSite(self.model, self.data, Jp, Jr, self.ee_site)
+        J = np.vstack([Jp, Jr])[:, :7]
 
-        # Resolved-rate IK: dq = pinv(J) * v
         dq = np.linalg.pinv(J, rcond=1e-4) @ v
         dq = np.clip(dq, -1.0, 1.0)
-
-        # Apply joint velocities to arm
         self.data.qvel[:7] = dq
 
-        # Gripper control (set finger DOF velocities)
+        # --------- Gripper motion ----------
         self._apply_gripper(grip_cmd)
 
-    def _apply_gripper(self, cmd):
-        # Close (>0) or open (<0) gripper by assigning DOF velocities
-        if cmd > 0.0:
-            # close
-            self.data.qvel[self.lf_dof] = -0.2
-            self.data.qvel[self.rf_dof] =  0.2
-        else:
-            # open
-            self.data.qvel[self.lf_dof] =  0.2
-            self.data.qvel[self.rf_dof] = -0.2
-
     # ============================================================
-    # ---------------------- Reward Function ----------------------
+    # Reward Terms
     # ============================================================
 
+    def _joint_limit_penalty(self):
+        q = self.data.qpos[:7]
+        lo = self.model.jnt_range[:7, 0]
+        hi = self.model.jnt_range[:7, 1]
+
+        margin = 0.15
+        pen = 0.0
+        for qi, ql, qh in zip(q, lo, hi):
+            if qi < ql + margin:
+                pen += (ql + margin - qi)
+            if qi > qh - margin:
+                pen += (qi - (qh - margin))
+        return -2.0 * pen
+
+    def _accel_penalty(self, action):
+        if self._prev_action is None:
+            self._prev_action = np.zeros_like(action)
+        accel = np.sum((action - self._prev_action) ** 2)
+        self._prev_action = action.copy()
+        return -0.1 * accel
+
+    def _obstacle_penalty(self):
+        ee = self._get_ee_pos()
+        dz = ee[2] - self.table_height
+        if dz < 0.06:  # 6 cm safe zone
+            return -5.0 * (0.06 - dz)
+        return 0.0
+
+    # ============================================================
+    # Compute Reward
+    # ============================================================
     def _compute_reward(self, action):
-        ee_pos, _ = self._get_ee_pose()
-        cube_pos, _ = self._get_cube_pose()
-        goal_pos, _ = self._get_goal_pose()
+        ee = self._get_ee_pos()
+        cube = self._get_cube_pos()
 
-        dx = np.linalg.norm(ee_pos - cube_pos)
-        dg = np.linalg.norm(cube_pos - goal_pos)
+        dist = np.linalg.norm(ee - cube)
 
-        # ----------------------------------------------------
-        # 1) REACH REWARD (positive when approaching cube)
-        # ----------------------------------------------------
-        r_reach = 1.0 / (dx + 1e-6)        # closer = bigger reward
-        r_reach = np.clip(r_reach, 0, 10)
+        # ---------------- REACH SHAPING ----------------
+        r_reach = 1.0 - np.tanh(dist)  # smoother than 1/dist
+        r_reach *= 5.0
 
-        # ----------------------------------------------------
-        # 2) GRASP REWARD
-        # ----------------------------------------------------
-        touching = dx < 0.04                    # near cube
-        grip_close = action[4] > 0.0            # closing gripper
+        # ---------------- SUCCESS ----------------------
+        success = dist < 0.03
+        r_success = 50.0 if success else 0.0
 
-        # reward only when first time grasping
-        if touching and grip_close:
-            r_grasp = 5.0
-        else:
-            r_grasp = 0.0
+        # ---------------- PENALTIES --------------------
+        r_action = -0.001 * np.sum(action**2)
+        r_joint  = self._joint_limit_penalty()
+        r_accel  = self._accel_penalty(action)
+        r_obst   = self._obstacle_penalty()
 
-        # ----------------------------------------------------
-        # 3) LIFT REWARD (positive proportional to height)
-        # ----------------------------------------------------
-        cube_height = cube_pos[2]
-        r_lift = 10.0 * cube_height
-
-        # ----------------------------------------------------
-        # 4) TRANSPORT REWARD (only if cube is lifted)
-        # ----------------------------------------------------
-        if cube_height > 0.03:
-            r_transport = 1.0 / (dg + 1e-6)
-            r_transport = np.clip(r_transport, 0, 10)
-        else:
-            r_transport = 0.0
-
-        # ----------------------------------------------------
-        # 5) GOAL SUCCESS REWARD
-        # ----------------------------------------------------
-        at_goal = (dg < 0.03 and cube_height > 0.05)
-        r_success = 100.0 if at_goal else 0.0
-
-        # ----------------------------------------------------
-        # 6) TABLE COLLISION PENALTY
-        # ----------------------------------------------------
-        r_collision = 0.0
-        for c in range(self.data.ncon):
-            contact = self.data.contact[c]
-            geom1 = self.model.geom_bodyid[contact.geom1]
-            geom2 = self.model.geom_bodyid[contact.geom2]
-
-            # Body names (from XML)
-            name1 = mu.mj_id2name(self.model, mu.mjtObj.mjOBJ_BODY, geom1)
-            name2 = mu.mj_id2name(self.model, mu.mjtObj.mjOBJ_BODY, geom2)
-
-
-            if ("table" in name1 and "panda" in name2) or \
-               ("table" in name2 and "panda" in name1):
-                r_collision -= 10.0
-
-        # ----------------------------------------------------
-        # 7) DROPPING PENALTY
-        # ----------------------------------------------------
-        # If cube was lifted and then falls down → big penalty
-        if self.lifted and cube_height < 0.02:
-            r_drop = -20.0
-        else:
-            r_drop = 0.0
-
-        # update lifted flag
-        if cube_height > 0.04:
-            self.lifted = True
-
-        # ----------------------------------------------------
-        # 8) ACTION REGULARIZATION
-        # ----------------------------------------------------
-        r_action = -0.001 * np.sum(action ** 2)
-
-        # ----------------------------------------------------
-        # TOTAL REWARD
-        # ----------------------------------------------------
         reward = (
             self.w_reach * r_reach +
-            self.w_grasp * r_grasp +
-            self.w_lift * r_lift +
-            self.w_transport * r_transport +
             self.w_success * r_success +
-            self.w_collision * r_collision +
-            self.w_drop * r_drop +
-            r_action
+            self.w_collision * r_obst +
+            self.w_drop * r_action +
+            self.w_grasp * r_joint +     
+            self.w_lift * r_accel        
         )
 
-        return float(reward), at_goal, {
-            "reach": float(r_reach),
-            "grasp": float(r_grasp),
-            "lift": float(r_lift),
-            "transport": float(r_transport),
-            "success": float(r_success),
-            "collision": float(r_collision),
-            "drop": float(r_drop),
-        }
-
-
-
+        return float(reward), success, {
+            "rew": {
+                "reach": r_reach,
+                "success": r_success,
+                "joint_penalty": r_joint,
+                "accel_penalty": r_accel,
+                "obstacle_penalty": r_obst,
+            },
+            "success": success
+        }   
 
     # ============================================================
-    # ---------------------- Gym API ------------------------------
+    # Gym API
     # ============================================================
-
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
-        mu.mj_resetData(self.model, self.data)
-        mu.mj_forward(self.model, self.data)  # ensure positions/orientations valid
+        mj.mj_resetData(self.model, self.data)
+        mj.mj_forward(self.model, self.data)
 
         self._pick_random_cube()
         self.step_count = 0
         self.lifted = False
 
+        # DEBUG: print cube info
+        cube_name = self.model.names[self.model.name_bodyadr[self.cube_body]]
+        cube_pos  = self.data.xpos[self.cube_body]
+        # print("\n===== NEW EPISODE =====")
+        # print(f"[RESET] Cube ID: {self.cube_body}")
+        # print(f"[RESET] Cube Name: {cube_name}")
+        # print(f"[RESET] Cube Position: {cube_pos}\n")
         return self._get_obs(), {}
+
 
     def step(self, action):
         action = np.clip(action, self.action_space.low, self.action_space.high)
         self._apply_action(action)
+        # if self.step_count == 1:
+        #     print(f"[EPISODE START] Cube: {self.cube_body}, Pos: {self.data.xpos[self.cube_body]}")
 
-        # Simulate at MuJoCo internal timestep to match dt
-        substeps = int(np.round(self.dt / self.model.opt.timestep))
-        for _ in range(max(substeps, 1)):
-            mu.mj_step(self.model, self.data)
+        # MuJoCo integration
+        sub = max(1, int(self.dt / self.model.opt.timestep))
+        for _ in range(sub):
+            mj.mj_step(self.model, self.data)
 
         obs = self._get_obs()
-        reward, success, rew_dict = self._compute_reward(action)
+        reward, success, info = self._compute_reward(action)
 
         self.step_count += 1
-        terminated = bool(success)
-        truncated = bool(self.step_count >= self.max_steps)
+        terminated = False
+        truncated = self.step_count >= self.max_steps
 
-        return obs, reward, terminated, truncated, {
-            "success": success,
-            "rew": rew_dict,
-        }
+        return obs, reward, terminated, truncated, info
 
     # ============================================================
-    # --------------------- Rendering Utils -----------------------
+    # Rendering
     # ============================================================
-
     def render_frame(self):
-        """Return an RGB frame (H, W, 3) uint8; works headless with mujoco.Renderer."""
-        if self.camera_id is not None:
-            self.renderer.update_scene(self.data, camera=self.camera_id)
-        else:
-            self.renderer.update_scene(self.data)  # default free camera
-        frame = self.renderer.render()
-        return frame  # (H, W, 3), uint8
+        renderer = mj.Renderer(self.model, 480, 640)
+        renderer.update_scene(self.data)
+        return renderer.render()

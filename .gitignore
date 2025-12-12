@@ -1,0 +1,44 @@
+# ---------------------------
+# Python cache
+# ---------------------------
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# ---------------------------
+# RL training logs & outputs
+# ---------------------------
+checkpoints/
+*/checkpoints/
+runs/
+*/runs/
+
+# Ignore tensorboard logs
+events.out.tfevents.*
+
+# Model weights
+*.pt
+*.pth
+*.npy
+
+# ---------------------------
+# Environment / virtual env
+# ---------------------------
+venv/
+env/
+.mujoco/
+.mjcache/
+
+# ---------------------------
+# OS & IDE files
+# ---------------------------
+.DS_Store
+.vscode/
+.idea/
+
+# ---------------------------
+# Build / temp
+# ---------------------------
+*.log
+*.tmp

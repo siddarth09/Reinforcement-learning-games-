@@ -21,7 +21,7 @@ def load_policy(model_path, obs_dim, act_dim, hidden=512, device="cpu"):
 # -------------------------------------------------------------
 # Run test with REAL MUJOCO VIEWER
 # -------------------------------------------------------------
-def run_test(xml_path, model_path, max_steps=1000, hidden=512):
+def run_test(xml_path, model_path, max_steps=1000, hidden=256):
 
     # Create environment (includes its own model + data)
     env = PandaEnv(xml_path, headless=True)
