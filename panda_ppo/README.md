@@ -9,7 +9,7 @@ The project is intentionally built **from first principles**:
 * Dense reward shaping
 * A clean PPO implementation (actor–critic)
 
-The goal is not just pe rformance, but **understanding and control** over every learning component.
+The goal is not just performance, but **understanding and control** over every learning component.
 
 ---
 
